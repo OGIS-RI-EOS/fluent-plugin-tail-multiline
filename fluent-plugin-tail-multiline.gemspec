@@ -18,6 +18,7 @@ Gem::Specification.new do |gem|
   gem.require_paths = ["lib"]
 
   gem.add_runtime_dependency "fluentd"
+  gem.add_runtime_dependency "fluent-mixin-config-placeholders"
   
   gem.add_development_dependency 'rake', '~> 0.9.2.2'
   gem.add_development_dependency 'rdoc', '~> 3.12'

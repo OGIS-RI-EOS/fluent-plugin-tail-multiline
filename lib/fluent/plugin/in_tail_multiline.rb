@@ -1,7 +1,41 @@
 module Fluent
   require 'fluent/plugin/in_tail'
+  require 'fluent/mixin/config_placeholders'
   class TailMultilineInput < TailInput
-    
+    # Merge https://github.com/yosisa/fluent-plugin-tail-ex/tree/c5fb7b8a1c2dbf9ad770ac48e149a71d87050a8
+ 
+    # Taken from fluent_plugin_tail_ex.
+    class TailExWatcher < TailWatcher
+      def initialize(path, rotate_wait, pe, &receive_lines)
+        @parent_receive_lines = receive_lines
+        super(path, rotate_wait, pe, &method(:_receive_lines))
+        @close_trigger = TimerWatcher.new(rotate_wait * 2, false, &method(:_close))
+      end
+
+      def _receive_lines(lines)
+        tag = @path.tr('/', '.').gsub(/\.+/, '.').gsub(/^\./, '')
+        @parent_receive_lines.call(lines, tag)
+      end
+
+      def close(loop=nil)
+        detach                  # detach first to avoid timer conflict
+        if loop
+          @close_trigger.attach(loop)
+        else
+          _close
+        end
+      end
+
+      def _close
+        @close_trigger.detach if @close_trigger.attached?
+        self.class.superclass.instance_method(:close).bind(self).call
+
+        @io_handler.on_notify
+        @io_handler.close
+        $log.info "stop following of #{@path}"
+      end
+    end
+
     class MultilineTextParser < TextParser
       def configure(conf, required=true)
         format = conf['format']
@@ -10,7 +44,7 @@ module Fluent
         elsif format[0] != ?/ || format[format.length-1] != ?/ 
           raise ConfigError, "'format' should be RegEx. Template is not supported in multiline mode"
         end
-        
+
         begin
           @regex = Regexp.new(format[1..-2],Regexp::MULTILINE)
           if @regex.named_captures.empty?
@@ -49,6 +83,14 @@ module Fluent
     config_param :rawdata_key, :string, :default => nil
     config_param :auto_flush_sec, :integer, :default => 1
     config_param :read_newfile_from_head, :bool, :default => false
+
+    # Taken from fluent_plugin_tail_ex.
+    config_param :expand_date, :bool, :default => true
+    config_param :read_all, :bool, :default => true
+    config_param :refresh_interval, :integer, :default => 3600
+
+    include Fluent::Mixin::ConfigPlaceholders
+
     (1..FORMAT_MAX_NUM).each do |i|
       config_param "format#{i}".to_sym, :string, :default => nil
     end
@@ -58,6 +100,9 @@ module Fluent
       @locker = Monitor.new
       @logbuf = nil
       @logbuf_flusher = CallLater::new
+
+      # Taken from fluent_plugin_tail_ex.
+      @ready = false
     end
 
     def configure(conf)
@@ -93,6 +138,17 @@ module Fluent
           end
         }
       end
+
+      # Taken from fluent_plugin_tail_ex.
+      if @tag.index('*')
+        @tag_prefix, @tag_suffix = @tag.split('*')
+        @tag_suffix ||= ''
+      else
+        @tag_prefix = nil
+        @tag_suffix = nil
+      end
+      @watchers = {}
+      @refresh_trigger = TailWatcher::TimerWatcher.new(@refresh_interval, true, &method(:refresh_watchers))
     end
     
     def configure_parser(conf)
@@ -100,7 +156,12 @@ module Fluent
       @parser.configure(conf)
     end
     
-    def receive_lines(lines)
+    def receive_lines(lines,tag)
+      # Taken from fluent_plugin_tail_ex
+      if @tag_prefix || @tag_suffix
+        @tag = @tag_prefix + tag + @tag_suffix
+      end
+
       @logbuf_flusher.cancel()
       es = MultiEventStream.new
       @locker.synchronize do
@@ -127,12 +188,91 @@ module Fluent
         flush_logbuf()
       end
     end
-    
+
+    # Taken from fluent_plugin_tail_ex
+    def expand_paths
+      date = Time.now
+      paths = []
+      for path in @paths
+        if @expand_date
+          path = date.strftime(path)
+        end
+        paths += Dir.glob(path)
+      end
+      paths
+    end
+
+    # Taken from fluent_plugin_tail_ex
+    def refresh_watchers
+      paths = expand_paths
+      missing = @watchers.keys - paths
+      added = paths - @watchers.keys
+
+      stop_watch(missing) unless missing.empty?
+      start_watch(added) unless added.empty?
+    end
+
+    # Taken from fluent_plugin_tail_ex
+    def start_watch(paths)
+      paths.each do |path|
+        if @pf
+          pe = @pf[path]
+          if @read_all && pe.read_inode == 0
+            inode = File::Stat.new(path).ino
+            pe.update(inode, 0)
+          end
+        else
+          pe = nil
+        end
+
+        watcher = TailExWatcher.new(path, @rotate_wait, pe, &method(:receive_lines))
+        watcher.attach(@loop)
+        @watchers[path] = watcher
+      end
+    end
+
+    # Taken from fluent_plugin_tail_ex
+    def stop_watch(paths, immediate=false)
+      paths.each do |path|
+        watcher = @watchers.delete(path)
+        if watcher
+          watcher.close(immediate ? nil : @loop)
+        end
+      end
+    end
+
+    # Taken from fluent_plugin_tail_ex
+    def start
+      paths, @paths = @paths, []
+      super
+      @thread.join
+      @paths = paths
+      refresh_watchers
+      @refresh_trigger.attach(@loop)
+      @ready = true
+      @thread = Thread.new(&method(:run))
+    end
+
     def shutdown
+      # Taken from fluent_plugin_tail_ex
+      @refresh_trigger.detach
+      stop_watch(@watchers.keys, true)
+      @loop.stop
+      @thread.join
+      @pf_file.close if @pf_file
+
       super
       flush_logbuf()
       @logbuf_flusher.shutdown()
     end   
+
+    # Taken from fluent_plugin_tail_ex
+    def run
+      # don't run unless ready to avoid coolio error                                                         
+      if @ready
+        super
+      end
+    end
 
     def flush_logbuf
       time, record = nil,nil
@@ -158,7 +298,7 @@ module Fluent
       record[@rawdata_key] = buf if @rawdata_key
       return time, record
     end
-    
+
   end
   
   class CallLater 
