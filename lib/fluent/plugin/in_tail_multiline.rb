@@ -256,7 +256,7 @@ module Fluent
     def shutdown
       # Taken from fluent_plugin_tail_ex
       @refresh_trigger.detach
-      stop_watch(@watchers.keys, true)
+      stop_watch(@watchers.keys)
 
       super
       flush_logbuf()
