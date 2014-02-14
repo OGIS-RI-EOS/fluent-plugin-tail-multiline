@@ -336,4 +336,40 @@ class TailMultilineInputTest < Test::Unit::TestCase
     end
   end
 
+  def test_multilinelog_with_expand_path
+    dirname = Dir.tmpdir
+    basename = "in_tail_multiline_ex-"
+    tmp_files = [Tempfile.new(basename, dirname)]
+    tmp_files << Tempfile.new(basename, dirname)
+    begin
+      d = create_driver %[
+        path #{dirname}/#{basename}*
+        tag test
+        format /^[s|f] (?<message>.*)/
+        format_firstline /^[s]/
+      ]
+      d.run do
+        tmp_files.each do |tmp|
+          File.open(tmp.path, 'w') {|f|
+            f.puts "s test1"
+            f.puts "f test2"
+            f.puts "f test3"
+            f.puts "s test4"
+          }
+          sleep 1
+        end
+      end
+
+      emits = d.emits
+      assert_equal({"message"=>"test1\nf test2\nf test3"}, emits[0][2])
+      assert_equal({"message"=>"test4"}, emits[1][2])
+      assert_equal({"message"=>"test1\nf test2\nf test3"}, emits[2][2])
+      assert_equal({"message"=>"test4"}, emits[3][2])
+    ensure
+      tmp_files.each do |tmp|
+        tmp.close(true)
+      end
+    end
+  end
+
 end
