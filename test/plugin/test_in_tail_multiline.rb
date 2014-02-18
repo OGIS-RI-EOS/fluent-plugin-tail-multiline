@@ -339,8 +339,7 @@ class TailMultilineInputTest < Test::Unit::TestCase
   def test_multilinelog_with_expand_path
     dirname = Dir.tmpdir
     basename = "in_tail_multiline_ex-"
-    tmp_files = [Tempfile.new(basename, dirname)]
-    tmp_files << Tempfile.new(basename, dirname)
+    tmp_files = 2.times.collect { Tempfile.new(basename, dirname) }
     begin
       d = create_driver %[
         path #{dirname}/#{basename}*
