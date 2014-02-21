@@ -4,12 +4,12 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 Gem::Specification.new do |gem|
   gem.name          = "fluent-plugin-tail-multiline"
-  gem.version       = "0.1.5"
+  gem.version       = "0.1.5.ogis"
   gem.authors       = ["Tomohisa Ota"]
   gem.email         = ["tomohisa.ota+github@gmail.com"]
-  gem.description   = "Extend tail plugin to support log with multiple line"
+  gem.description   = "Merge fluent-plugin-tail-multiline and fluent-plugin-tail-ex "
   gem.summary       = gem.description
-  gem.homepage      = "http://github.com/tomohisaota/fluent-plugin-tail-multiline"
+  gem.homepage      = "https://github.com/OGIS-RI-EOS/fluent-plugin-tail-multiline"
 
   gem.files         = `git ls-files`.split($/)
   gem.files.reject! { |fn| fn.include? "doc/" }
